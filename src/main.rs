@@ -15,10 +15,10 @@ use rocket::{
 #[derive(Debug, Clone, FromForm, Serialize, Deserialize)]
 #[serde(crate = "rocket::serde")]
 struct Message {
-    #[field(validate = len(..30))]
-    pub room: String,
     #[field(validate = len(..20))]
     pub sender: String,
+    #[field(validate = len(..30))]
+    pub room: String,
     pub content: String,
     pub created_at: String,
 }
@@ -33,17 +33,25 @@ struct RoomWithMessages {
 pub struct CORS;
 
 pub struct RoomsMessagesCache {
-    cache: RwLock<HashMap<String, Vec<Message>>>,
+    entries: RwLock<HashMap<String, Vec<Message>>>,
 }
 
 impl RoomsMessagesCache {
+    fn new() -> RoomsMessagesCache {
+        let messages_cache: RoomsMessagesCache = RoomsMessagesCache {
+            entries: RwLock::new(HashMap::new()),
+        };
+
+        return messages_cache;
+    }
+
     fn get(&self, room: &str) -> Option<Vec<Message>> {
-        let messages = self.cache.read().unwrap();
+        let messages = self.entries.read().unwrap();
         return messages.get(room).cloned();
     }
 
     fn set(&self, message: Message) {
-        let mut cache = self.cache.write().unwrap();
+        let mut cache = self.entries.write().unwrap();
         let messages = cache.get_mut(&message.room);
         match messages {
             None => {
@@ -56,20 +64,6 @@ impl RoomsMessagesCache {
                 }
             }
         };
-    }
-}
-
-pub mod cache {
-    use std::{collections::HashMap, sync::RwLock};
-
-    use crate::RoomsMessagesCache;
-
-    pub fn new() -> RoomsMessagesCache {
-        let messages_cache: RoomsMessagesCache = RoomsMessagesCache {
-            cache: RwLock::new(HashMap::new()),
-        };
-
-        return messages_cache;
     }
 }
 
@@ -135,7 +129,7 @@ fn get_messages(room: String, cache: &State<RoomsMessagesCache>) -> Json<RoomWit
 async fn events(queue: &State<Sender<Message>>, mut end: Shutdown) -> EventStream![] {
     let mut rx = queue.subscribe();
 
-    EventStream! {
+    return EventStream! {
         loop {
             let msg = select! {
                 msg = rx.recv() => match msg {
@@ -148,7 +142,7 @@ async fn events(queue: &State<Sender<Message>>, mut end: Shutdown) -> EventStrea
             yield Event::json(&msg);
 
         }
-    }
+    };
 }
 
 #[launch]
@@ -156,7 +150,7 @@ fn rocket() -> _ {
     rocket::build()
         .attach(CORS)
         .manage(channel::<Message>(1024).0)
-        .manage(cache::new())
+        .manage(RoomsMessagesCache::new())
         .mount(
             "/",
             routes![post_message, get_messages, events, all_options],
